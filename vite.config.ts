@@ -1,5 +1,7 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import vinext from "vinext";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -10,6 +12,32 @@ const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
+const threeModuleSourcePath = fileURLToPath(
+  new URL("./app/vendor/three.module.min.txt", import.meta.url),
+);
+
+function threeDevAsset(): Plugin {
+  return {
+    name: "skybound-three-dev-asset",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use(
+        "/vendor/three.module.min.js",
+        async (_request, response, next) => {
+          try {
+            const source = await readFile(threeModuleSourcePath);
+            response.statusCode = 200;
+            response.setHeader("Content-Type", "text/javascript; charset=utf-8");
+            response.setHeader("Cache-Control", "no-store");
+            response.end(source);
+          } catch (error) {
+            next(error as Error);
+          }
+        },
+      );
+    },
+  };
+}
 
 const localBindingConfig = {
   main: "./worker/index.ts",
@@ -48,6 +76,7 @@ export default defineConfig(async () => {
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
+      threeDevAsset(),
       vinext(),
       sites(),
       cloudflare({
