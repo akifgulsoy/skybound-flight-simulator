@@ -56,7 +56,7 @@ test("Skybound ana sayfasını sunucu tarafında oluşturur", async () => {
 });
 
 test("uçuş simülatörü temel sistemleri kaynakta bulunur", async () => {
-  const [source, styles, threeAsset] = await Promise.all([
+  const [source, styles, threeModuleAsset, threeCoreAsset] = await Promise.all([
     readFile(
       new URL("../app/components/FlightSimulator.tsx", import.meta.url),
       "utf8",
@@ -64,6 +64,10 @@ test("uçuş simülatörü temel sistemleri kaynakta bulunur", async () => {
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(
       new URL("../dist/client/vendor/three.module.min.js", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL("../dist/client/vendor/three.core.min.js", import.meta.url),
       "utf8",
     ),
   ]);
@@ -77,7 +81,9 @@ test("uçuş simülatörü temel sistemleri kaynakta bulunur", async () => {
   assert.match(source, /pendingStartRef/);
   assert.match(source, /hazır olduğunda otomatik başlayacak/);
   assert.doesNotMatch(source, /URL\.createObjectURL/);
-  assert.match(threeAsset, /export\{/);
+  assert.match(threeModuleAsset, /from["']\.\/three\.core\.min\.js["']/);
+  assert.match(threeModuleAsset, /export\{/);
+  assert.match(threeCoreAsset, /export\{/);
 
   const toastZIndex = Number(
     styles.match(/\.toast\s*\{[^}]*z-index:\s*(\d+)/)?.[1],

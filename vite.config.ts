@@ -12,29 +12,45 @@ const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
-const threeModuleSourcePath = fileURLToPath(
-  new URL("./app/vendor/three.module.min.txt", import.meta.url),
-);
+const threeDevAssets = new Map([
+  [
+    "/vendor/three.module.min.js",
+    fileURLToPath(
+      new URL("./node_modules/three/build/three.module.min.js", import.meta.url),
+    ),
+  ],
+  [
+    "/vendor/three.core.min.js",
+    fileURLToPath(
+      new URL("./node_modules/three/build/three.core.min.js", import.meta.url),
+    ),
+  ],
+]);
 
 function threeDevAsset(): Plugin {
   return {
     name: "skybound-three-dev-asset",
     apply: "serve",
     configureServer(server) {
-      server.middlewares.use(
-        "/vendor/three.module.min.js",
-        async (_request, response, next) => {
-          try {
-            const source = await readFile(threeModuleSourcePath);
-            response.statusCode = 200;
-            response.setHeader("Content-Type", "text/javascript; charset=utf-8");
-            response.setHeader("Cache-Control", "no-store");
-            response.end(source);
-          } catch (error) {
-            next(error as Error);
-          }
-        },
-      );
+      threeDevAssets.forEach((sourcePath, route) => {
+        server.middlewares.use(
+          route,
+          async (_request, response, next) => {
+            try {
+              const source = await readFile(sourcePath);
+              response.statusCode = 200;
+              response.setHeader(
+                "Content-Type",
+                "text/javascript; charset=utf-8",
+              );
+              response.setHeader("Cache-Control", "no-store");
+              response.end(source);
+            } catch (error) {
+              next(error as Error);
+            }
+          },
+        );
+      });
     },
   };
 }
