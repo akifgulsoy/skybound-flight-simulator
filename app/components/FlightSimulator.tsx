@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as ThreeTypes from "three";
+import threeModuleSourceUrl from "../vendor/three.module.min.txt?url";
 
 type ThreeModule = typeof import("three");
 
@@ -688,10 +689,24 @@ export function FlightSimulator() {
     let cleanup: (() => void) | undefined;
 
     void (async () => {
-    const threeUrl = "/vendor/three.module.min.js";
-    const THREE = (await import(
-      /* @vite-ignore */ threeUrl
-    )) as ThreeModule;
+    const threeModuleResponse = await fetch(threeModuleSourceUrl);
+    if (!threeModuleResponse.ok) {
+      throw new Error(
+        `3B motoru indirilemedi (${threeModuleResponse.status})`,
+      );
+    }
+    const threeModuleSource = await threeModuleResponse.text();
+    const threeModuleBlobUrl = URL.createObjectURL(
+      new Blob([threeModuleSource], { type: "text/javascript" }),
+    );
+    let THREE: ThreeModule;
+    try {
+      THREE = (await import(
+        /* @vite-ignore */ threeModuleBlobUrl
+      )) as ThreeModule;
+    } finally {
+      URL.revokeObjectURL(threeModuleBlobUrl);
+    }
     if (disposed) return;
 
     const checkpoints = CHECKPOINT_COORDS.map(
