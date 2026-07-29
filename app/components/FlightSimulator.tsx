@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as THREE from "three";
+import type * as ThreeTypes from "three";
+
+type ThreeModule = typeof import("three");
 
 type FlightMode = "briefing" | "running" | "paused" | "landed" | "crashed";
 type Weather = "clear" | "windy" | "sunset";
@@ -25,7 +27,7 @@ type Telemetry = {
 };
 
 type FlightState = {
-  position: THREE.Vector3;
+  position: ThreeTypes.Vector3;
   speed: number;
   verticalSpeed: number;
   throttle: number;
@@ -53,12 +55,12 @@ const OBJECTIVES = [
   "İniş takımını aç, piste hizalan ve yumuşak iniş yap.",
 ];
 
-const CHECKPOINTS = [
-  new THREE.Vector3(0, 105, -640),
-  new THREE.Vector3(-560, 190, -1260),
-  new THREE.Vector3(-980, 150, -350),
-  new THREE.Vector3(-180, 75, 500),
-];
+const CHECKPOINT_COORDS = [
+  [0, 105, -640],
+  [-560, 190, -1260],
+  [-980, 150, -350],
+  [-180, 75, 500],
+] as const;
 
 const CAMERA_LABELS: Record<CameraMode, string> = {
   chase: "Takip",
@@ -83,7 +85,7 @@ const INITIAL_TELEMETRY: Telemetry = {
   warning: "",
 };
 
-function makeAircraft() {
+function makeAircraft(THREE: ThreeModule) {
   const aircraft = new THREE.Group();
   aircraft.name = "aircraft";
 
@@ -182,9 +184,11 @@ function makeAircraft() {
 }
 
 function makeWorld(
-  scene: THREE.Scene,
+  THREE: ThreeModule,
+  scene: ThreeTypes.Scene,
   weather: Weather,
-  gateRefs: THREE.Group[],
+  gateRefs: ThreeTypes.Group[],
+  checkpoints: ThreeTypes.Vector3[],
 ) {
   const skyColors = {
     clear: [0x84b7c5, 0xdce5d7, 0x1d4a53],
@@ -261,8 +265,8 @@ function makeWorld(
 
   const grid = new THREE.GridHelper(5000, 100, 0x62816a, 0x47614f);
   grid.position.y = 0.05;
-  (grid.material as THREE.Material).transparent = true;
-  (grid.material as THREE.Material).opacity = 0.17;
+  (grid.material as ThreeTypes.Material).transparent = true;
+  (grid.material as ThreeTypes.Material).opacity = 0.17;
   scene.add(grid);
 
   const water = new THREE.Mesh(
@@ -443,7 +447,7 @@ function makeWorld(
     scene.add(cloud);
   }
 
-  CHECKPOINTS.forEach((point, index) => {
+  checkpoints.forEach((point, index) => {
     const gate = new THREE.Group();
     const ring = new THREE.Mesh(
       new THREE.TorusGeometry(index === 3 ? 54 : 64, 3.2, 8, 48),
@@ -486,22 +490,7 @@ function formatHeading(value: number) {
 
 export function FlightSimulator() {
   const mountRef = useRef<HTMLDivElement>(null);
-  const flightRef = useRef<FlightState>({
-    position: new THREE.Vector3(0, GROUND_Y, 260),
-    speed: 0,
-    verticalSpeed: 0,
-    throttle: 0,
-    pitch: 0,
-    roll: 0,
-    yaw: 0,
-    onGround: true,
-    gearDown: true,
-    stage: 0,
-    score: 0,
-    elapsed: 0,
-    distance: 0,
-    lastHudUpdate: 0,
-  });
+  const flightRef = useRef<FlightState | null>(null);
   const modeRef = useRef<FlightMode>("briefing");
   const keysRef = useRef<Record<string, boolean>>({});
   const touchRef = useRef<Record<string, boolean>>({});
@@ -548,7 +537,7 @@ export function FlightSimulator() {
     const audio = audioRef.current;
     if (audio) {
       audio.gain.gain.setTargetAtTime(
-        muted ? 0 : 0.025 + flightRef.current.throttle * 0.055,
+        muted ? 0 : 0.025 + (flightRef.current?.throttle ?? 0) * 0.055,
         audio.context.currentTime,
         0.1,
       );
@@ -583,6 +572,10 @@ export function FlightSimulator() {
 
   const resetFlight = useCallback((toBriefing = false) => {
     const flight = flightRef.current;
+    if (!flight) {
+      setMode(toBriefing ? "briefing" : "running");
+      return;
+    }
     flight.position.set(0, GROUND_Y, 260);
     flight.speed = 0;
     flight.verticalSpeed = 0;
@@ -632,6 +625,10 @@ export function FlightSimulator() {
   }, []);
 
   const startFlight = useCallback(() => {
+    if (!flightRef.current) {
+      announce("Uçuş sistemi hazırlanıyor — birkaç saniye sonra tekrar dene");
+      return;
+    }
     ensureAudio();
     resetFlight(false);
     announce("Skybound 01 — kalkış izni verildi");
@@ -651,9 +648,11 @@ export function FlightSimulator() {
       if (event.repeat) return;
       if (key === "c") cycleCamera();
       if (key === "g" && modeRef.current === "running") {
-        flightRef.current.gearDown = !flightRef.current.gearDown;
+        const flight = flightRef.current;
+        if (!flight) return;
+        flight.gearDown = !flight.gearDown;
         announce(
-          flightRef.current.gearDown
+          flight.gearDown
             ? "İniş takımı açık"
             : "İniş takımı kapalı",
         );
@@ -685,6 +684,39 @@ export function FlightSimulator() {
     const mount = mountRef.current;
     if (!mount) return;
 
+    let disposed = false;
+    let cleanup: (() => void) | undefined;
+
+    void (async () => {
+    const threeUrl = "/vendor/three.module.min.js";
+    const THREE = (await import(
+      /* @vite-ignore */ threeUrl
+    )) as ThreeModule;
+    if (disposed) return;
+
+    const checkpoints = CHECKPOINT_COORDS.map(
+      ([x, y, z]) => new THREE.Vector3(x, y, z),
+    );
+    const flight =
+      flightRef.current ??
+      ({
+        position: new THREE.Vector3(0, GROUND_Y, 260),
+        speed: 0,
+        verticalSpeed: 0,
+        throttle: 0,
+        pitch: 0,
+        roll: 0,
+        yaw: 0,
+        onGround: true,
+        gearDown: true,
+        stage: 0,
+        score: 0,
+        elapsed: 0,
+        distance: 0,
+        lastHudUpdate: 0,
+      } satisfies FlightState);
+    flightRef.current = flight;
+
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(
       56,
@@ -707,9 +739,9 @@ export function FlightSimulator() {
     renderer.domElement.setAttribute("aria-label", "3B uçuş simülasyonu");
     mount.appendChild(renderer.domElement);
 
-    const gates: THREE.Group[] = [];
-    makeWorld(scene, weather, gates);
-    const aircraft = makeAircraft();
+    const gates: ThreeTypes.Group[] = [];
+    makeWorld(THREE, scene, weather, gates, checkpoints);
+    const aircraft = makeAircraft(THREE);
     scene.add(aircraft);
 
     const clock = new THREE.Clock();
@@ -718,6 +750,7 @@ export function FlightSimulator() {
     const forward = new THREE.Vector3();
     const up = new THREE.Vector3();
     const targetCamera = new THREE.Vector3();
+    const towerCameraPosition = new THREE.Vector3(115, 48, 220);
     const tempQuaternion = new THREE.Quaternion();
     const euler = new THREE.Euler(0, 0, 0, "YXZ");
     let frameId = 0;
@@ -727,7 +760,7 @@ export function FlightSimulator() {
         flight.stage = 1;
         announce("Kalkış tamam — kuzey kapısına ilerle");
       } else if (flight.stage > 0 && flight.stage < 5) {
-        const target = CHECKPOINTS[flight.stage - 1];
+        const target = checkpoints[flight.stage - 1];
         const threshold = flight.stage === 4 ? 92 : 105;
         if (flight.position.distanceTo(target) < threshold) {
           flight.stage += 1;
@@ -741,8 +774,8 @@ export function FlightSimulator() {
       }
 
       gates.forEach((gate, index) => {
-        const material = (gate.children[0] as THREE.Mesh)
-          .material as THREE.MeshBasicMaterial;
+        const material = (gate.children[0] as ThreeTypes.Mesh)
+          .material as ThreeTypes.MeshBasicMaterial;
         const gateStage = index + 1;
         material.opacity =
           flight.stage === gateStage ? 0.95 : flight.stage > gateStage ? 0.09 : 0.22;
@@ -787,6 +820,7 @@ export function FlightSimulator() {
       frameId = window.requestAnimationFrame(animate);
       const dt = Math.min(clock.getDelta(), 0.04);
       const flight = flightRef.current;
+      if (!flight) return;
       const active = modeRef.current === "running";
 
       if (active) {
@@ -949,7 +983,7 @@ export function FlightSimulator() {
         if (flight.elapsed - flight.lastHudUpdate > 0.09) {
           const target =
             flight.stage > 0 && flight.stage < 5
-              ? CHECKPOINTS[flight.stage - 1]
+              ? checkpoints[flight.stage - 1]
               : null;
           setTelemetry({
             speed: flight.speed * KNOTS,
@@ -1038,7 +1072,7 @@ export function FlightSimulator() {
         camera.lookAt(lookTarget);
         aircraft.visible = false;
       } else {
-        camera.position.lerp(new THREE.Vector3(115, 48, 220), 0.035);
+        camera.position.lerp(towerCameraPosition, 0.035);
         camera.lookAt(flight.position);
         aircraft.visible = true;
       }
@@ -1059,7 +1093,7 @@ export function FlightSimulator() {
     };
     window.addEventListener("resize", onResize);
 
-    return () => {
+    cleanup = () => {
       window.cancelAnimationFrame(frameId);
       window.removeEventListener("resize", onResize);
       renderer.dispose();
@@ -1075,6 +1109,17 @@ export function FlightSimulator() {
       if (renderer.domElement.parentElement === mount) {
         mount.removeChild(renderer.domElement);
       }
+    };
+    })().catch((error: unknown) => {
+      console.error("Skybound 3B motoru yüklenemedi", error);
+      if (!disposed) {
+        announce("3B uçuş sistemi yüklenemedi — sayfayı yenileyin");
+      }
+    });
+
+    return () => {
+      disposed = true;
+      cleanup?.();
     };
   }, [announce, weather]);
 

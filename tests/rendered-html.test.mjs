@@ -65,5 +65,6 @@ test("uçuş simülatörü temel sistemleri kaynakta bulunur", async () => {
   assert.match(source, /STALL/);
   assert.match(source, /navigator\.getGamepads/);
   assert.match(source, /AudioContext/);
-  assert.match(source, /CHECKPOINTS/);
+  assert.match(source, /CHECKPOINT_COORDS/);
+  assert.match(source, /three\.module\.min\.js/);
 });
