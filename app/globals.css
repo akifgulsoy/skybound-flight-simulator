@@ -45,6 +45,23 @@ button {
   user-select: none;
 }
 
+.sim-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(84, 231, 255, 0.09), transparent 32%),
+    #071114;
+}
+
+.sim-loading strong {
+  font-size: clamp(18px, 3vw, 32px);
+  font-weight: 560;
+}
+
 .sim-canvas {
   position: absolute;
   inset: 0;

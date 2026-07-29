@@ -1,5 +1,5 @@
-import { FlightSimulator } from "./components/FlightSimulator";
+import { FlightSimulatorLoader } from "./components/FlightSimulatorLoader";
 
 export default function Home() {
-  return <FlightSimulator />;
+  return <FlightSimulatorLoader />;
 }

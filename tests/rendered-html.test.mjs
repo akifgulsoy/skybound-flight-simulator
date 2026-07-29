@@ -24,14 +24,35 @@ async function render() {
 }
 
 test("Skybound ana sayfasını sunucu tarafında oluşturur", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  const OriginalAbortController = globalThis.AbortController;
+  const flightSimulatorInitializations = [];
+  globalThis.AbortController = class extends OriginalAbortController {
+    constructor() {
+      super();
+      const stack = new Error().stack ?? "";
+      if (stack.includes("FlightSimulator")) {
+        flightSimulatorInitializations.push(stack);
+      }
+    }
+  };
 
-  const html = await response.text();
-  assert.match(html, /<title>Skybound Flight Simulator<\/title>/i);
-  assert.match(html, /Tarayıcıda çalışan/);
-  assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
+  try {
+    const response = await render();
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+
+    const html = await response.text();
+    assert.match(html, /<title>Skybound Flight Simulator<\/title>/i);
+    assert.match(html, /Uçuş sistemi hazırlanıyor/);
+    assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
+    assert.equal(
+      flightSimulatorInitializations.length,
+      0,
+      "Three.js sunucu tarafında başlatılmamalı",
+    );
+  } finally {
+    globalThis.AbortController = OriginalAbortController;
+  }
 });
 
 test("uçuş simülatörü temel sistemleri kaynakta bulunur", async () => {
