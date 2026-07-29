@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type * as ThreeTypes from "three";
-import threeModuleSourceUrl from "../vendor/three.module.min.txt?url";
 
 type ThreeModule = typeof import("three");
 
 type FlightMode = "briefing" | "running" | "paused" | "landed" | "crashed";
 type Weather = "clear" | "windy" | "sunset";
 type CameraMode = "chase" | "cockpit" | "tower";
+type EngineStatus = "loading" | "ready" | "error";
 
 type Telemetry = {
   speed: number;
@@ -47,6 +47,7 @@ type FlightState = {
 const GROUND_Y = 1.9;
 const KNOTS = 1.94384;
 const FEET = 3.28084;
+const THREE_MODULE_URL = "/vendor/three.module.min.js";
 
 const OBJECTIVES = [
   "Pist 27’den kalkış yap ve 300 ft irtifaya tırman.",
@@ -498,6 +499,8 @@ export function FlightSimulator() {
   const cameraRef = useRef<CameraMode>("chase");
   const weatherRef = useRef<Weather>("clear");
   const mutedRef = useRef(false);
+  const pendingStartRef = useRef(false);
+  const toastTimerRef = useRef<number | null>(null);
   const audioRef = useRef<{
     context: AudioContext;
     oscillator: OscillatorNode;
@@ -514,6 +517,9 @@ export function FlightSimulator() {
   const [toast, setToast] = useState("");
   const [finalScore, setFinalScore] = useState(0);
   const [bestScore, setBestScore] = useState(0);
+  const [engineStatus, setEngineStatus] = useState<EngineStatus>("loading");
+  const [engineRetry, setEngineRetry] = useState(0);
+  const [startQueued, setStartQueued] = useState(false);
 
   useEffect(() => {
     const saved = Number(window.localStorage.getItem("skybound-best") || 0);
@@ -546,9 +552,24 @@ export function FlightSimulator() {
   }, [muted]);
 
   const announce = useCallback((message: string) => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
     setToast(message);
-    window.setTimeout(() => setToast(""), 2500);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast("");
+      toastTimerRef.current = null;
+    }, 3200);
   }, []);
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const cycleCamera = useCallback(() => {
     setCameraMode((current) => {
@@ -626,14 +647,23 @@ export function FlightSimulator() {
   }, []);
 
   const startFlight = useCallback(() => {
-    if (!flightRef.current) {
-      announce("Uçuş sistemi hazırlanıyor — birkaç saniye sonra tekrar dene");
+    ensureAudio();
+    if (engineStatus === "error") {
+      pendingStartRef.current = true;
+      setStartQueued(true);
+      setEngineRetry((value) => value + 1);
+      announce("3B motor yeniden başlatılıyor — uçuş otomatik başlayacak");
       return;
     }
-    ensureAudio();
+    if (engineStatus !== "ready" || !flightRef.current) {
+      pendingStartRef.current = true;
+      setStartQueued(true);
+      announce("Uçuş sistemi hazırlanıyor — hazır olduğunda otomatik başlayacak");
+      return;
+    }
     resetFlight(false);
     announce("Skybound 01 — kalkış izni verildi");
-  }, [announce, ensureAudio, resetFlight]);
+  }, [announce, engineStatus, ensureAudio, resetFlight]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -687,26 +717,13 @@ export function FlightSimulator() {
 
     let disposed = false;
     let cleanup: (() => void) | undefined;
+    flightRef.current = null;
+    setEngineStatus("loading");
 
     void (async () => {
-    const threeModuleResponse = await fetch(threeModuleSourceUrl);
-    if (!threeModuleResponse.ok) {
-      throw new Error(
-        `3B motoru indirilemedi (${threeModuleResponse.status})`,
-      );
-    }
-    const threeModuleSource = await threeModuleResponse.text();
-    const threeModuleBlobUrl = URL.createObjectURL(
-      new Blob([threeModuleSource], { type: "text/javascript" }),
-    );
-    let THREE: ThreeModule;
-    try {
-      THREE = (await import(
-        /* @vite-ignore */ threeModuleBlobUrl
-      )) as ThreeModule;
-    } finally {
-      URL.revokeObjectURL(threeModuleBlobUrl);
-    }
+    const THREE = (await import(
+      /* @vite-ignore */ THREE_MODULE_URL
+    )) as ThreeModule;
     if (disposed) return;
 
     const checkpoints = CHECKPOINT_COORDS.map(
@@ -1125,10 +1142,20 @@ export function FlightSimulator() {
         mount.removeChild(renderer.domElement);
       }
     };
+    setEngineStatus("ready");
+    setStartQueued(false);
+    if (pendingStartRef.current) {
+      pendingStartRef.current = false;
+      resetFlight(false);
+      announce("Skybound 01 — motor hazır, kalkış izni verildi");
+    }
     })().catch((error: unknown) => {
       console.error("Skybound 3B motoru yüklenemedi", error);
       if (!disposed) {
-        announce("3B uçuş sistemi yüklenemedi — sayfayı yenileyin");
+        pendingStartRef.current = false;
+        setStartQueued(false);
+        setEngineStatus("error");
+        announce("3B motor yüklenemedi — yeniden denemek için düğmeye bas");
       }
     });
 
@@ -1136,7 +1163,7 @@ export function FlightSimulator() {
       disposed = true;
       cleanup?.();
     };
-  }, [announce, weather]);
+  }, [announce, engineRetry, resetFlight, weather]);
 
   useEffect(
     () => () => {
@@ -1162,6 +1189,15 @@ export function FlightSimulator() {
   });
 
   const objectiveStage = Math.min(telemetry.stage, OBJECTIVES.length - 1);
+  const startButtonLabel = startQueued
+    ? "Uçuş sıraya alındı"
+    : engineStatus === "loading"
+      ? "Hazırlanırken başlat"
+      : engineStatus === "error"
+        ? "Motoru yeniden dene"
+        : "Uçuşu başlat";
+  const startButtonIcon =
+    engineStatus === "loading" ? "…" : engineStatus === "error" ? "↻" : "→";
 
   return (
     <main className={`sim-shell weather-${weather}`}>
@@ -1385,7 +1421,11 @@ export function FlightSimulator() {
         </>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
 
       {mode === "briefing" && (
         <div className="overlay">
@@ -1443,9 +1483,14 @@ export function FlightSimulator() {
                   </button>
                 ))}
               </div>
-              <button className="start-button" onClick={startFlight}>
-                <span>Uçuşu başlat</span>
-                <span>→</span>
+              <button
+                className={`start-button engine-${engineStatus}`}
+                onClick={startFlight}
+                aria-busy={engineStatus === "loading"}
+                data-engine-status={engineStatus}
+              >
+                <span>{startButtonLabel}</span>
+                <span>{startButtonIcon}</span>
               </button>
               <div className="mini-controls">
                 <div className="mini-control">

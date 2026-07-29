@@ -56,18 +56,39 @@ test("Skybound ana sayfasını sunucu tarafında oluşturur", async () => {
 });
 
 test("uçuş simülatörü temel sistemleri kaynakta bulunur", async () => {
-  const source = await readFile(
-    new URL("../app/components/FlightSimulator.tsx", import.meta.url),
-    "utf8",
-  );
+  const [source, styles, threeAsset] = await Promise.all([
+    readFile(
+      new URL("../app/components/FlightSimulator.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(
+      new URL("../dist/client/vendor/three.module.min.js", import.meta.url),
+      "utf8",
+    ),
+  ]);
   assert.match(source, /makeAircraft/);
   assert.match(source, /makeWorld/);
   assert.match(source, /STALL/);
   assert.match(source, /navigator\.getGamepads/);
   assert.match(source, /AudioContext/);
   assert.match(source, /CHECKPOINT_COORDS/);
-  assert.match(source, /three\.module\.min\.txt\?url/);
-  assert.match(source, /URL\.createObjectURL/);
+  assert.match(source, /THREE_MODULE_URL = "\/vendor\/three\.module\.min\.js"/);
+  assert.match(source, /pendingStartRef/);
+  assert.match(source, /hazır olduğunda otomatik başlayacak/);
+  assert.doesNotMatch(source, /URL\.createObjectURL/);
+  assert.match(threeAsset, /export\{/);
+
+  const toastZIndex = Number(
+    styles.match(/\.toast\s*\{[^}]*z-index:\s*(\d+)/)?.[1],
+  );
+  const overlayZIndex = Number(
+    styles.match(/\.overlay\s*\{[^}]*z-index:\s*(\d+)/)?.[1],
+  );
+  assert.ok(
+    toastZIndex > overlayZIndex,
+    "Bildirim katmanı ekran kaplamalarının üzerinde olmalı",
+  );
 
   const workerSource = await readFile(
     new URL("../dist/server/index.js", import.meta.url),
